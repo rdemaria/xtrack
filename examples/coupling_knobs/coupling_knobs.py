@@ -62,6 +62,7 @@ def get_response_from_xtrack(tracker,beam=1):
         tracker.vars[lhs]=1e-3
         tw=tracker.twiss(method='4d')
         cm=tw['c_minus']
+        print(lhs,mad.globals[lhs],cm)
         cmr.append(cm)
         cmi.append(0)
         tracker.vars[lhs]=0
