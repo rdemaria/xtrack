@@ -576,7 +576,7 @@ class Line:
                                         _context=_context, _buffer=_buffer)
 
         if self._var_management is not None:
-            out._init_var_management(dct=self._var_management_to_dict())
+            out._clone_var_management(self._var_management['manager'])
 
         out.config.update(self.config.copy())
         out._extra_config.update(self._extra_config.copy())
@@ -2488,6 +2488,27 @@ class Line:
                 self._var_management['data'][kk].update(
                                             dct['_var_management_data'][kk])
             manager.load(dct['_var_manager'])
+
+        self._line_vars = LineVars(self)
+
+    def _clone_var_management(self, mgr):
+
+        manager = mgr.clone(
+                {'vars': mgr.containers['vars']._owner.copy(),
+                 'f':mathfunctions,
+                 'element_refs':self.element_dict})
+        _vref = manager.ref(_var_values, 'vars')
+        _fref = manager.ref(mathfunctions, 'f')
+        _lref = manager.ref(self.element_dict, 'element_refs')
+
+        self._var_management = {}
+        self._var_management['data'] = {}
+        self._var_management['data']['var_values'] = _var_values
+
+        self._var_management['manager'] = manager
+        self._var_management['lref'] = manager.containers['element_refs']
+        self._var_management['vref'] = manager.containers['vref']
+        self._var_management['fref'] = manager.containers['fref']
 
         self._line_vars = LineVars(self)
 
