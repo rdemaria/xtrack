@@ -245,7 +245,7 @@ void track_curved_exact_bend_single_particle(
 
     // The case for non-zero curvature, s is arc length
     // Useful constants
-    const double C = pz - k0_chi * ((1 / h) + x);
+    const double C = pz - k0_chi / h -  k0_chi * x;
     new_px = px * cos(s * h) + C * sin(s * h);
     double const new_pz = sqrt(POW2(one_plus_delta) - POW2(new_px) - POW2(py));
     // double const d_new_px_ds = new_px / new_pz;
@@ -253,7 +253,7 @@ void track_curved_exact_bend_single_particle(
     const double d_new_px_ds = C * h * cos(h * s) - h * px * sin(h * s);
 
     // Update particle coordinates
-    new_x = (new_pz * h - d_new_px_ds - k0_chi) / (h * k0_chi);
+    new_x = new_pz / k0_chi - d_new_px_ds/ (h * k0_chi) - 1 / h;
     const double D = asin(A * px) - asin(A * new_px);
     new_y = y + ((py * s) / (k0_chi / h)) + (py / k0_chi) * D;
 
