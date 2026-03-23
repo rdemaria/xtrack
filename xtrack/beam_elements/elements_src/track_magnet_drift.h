@@ -438,11 +438,13 @@ void track_magnet_drift_single_particle(
             break;
         case 7:
             // track_polar_drift_single_particle(part, length/4, h);
-            LocalParticle_set_px(part, LocalParticle_get_px(part) - 0.25 * k0 * LocalParticle_get_chi(part) * length);
-            track_polar_drift_single_particle(part, length/2, h);
-            LocalParticle_set_px(part, LocalParticle_get_px(part) - 0.5 * k0 * LocalParticle_get_chi(part) * length);
-            track_polar_drift_single_particle(part, length/2, h);
-            LocalParticle_set_px(part, LocalParticle_get_px(part) - 0.25 * k0 * LocalParticle_get_chi(part) * length);
+            track_polar_drift_single_particle(part, 0.6756035959798289 * length, h);
+            LocalParticle_set_px(part, LocalParticle_get_px(part) - 1.3512071919596578 * k0 * LocalParticle_get_chi(part) * length);
+            track_polar_drift_single_particle(part, -0.17560359597982889 * length, h);
+            LocalParticle_set_px(part, LocalParticle_get_px(part) - (-1.7024143839193155) * k0 * LocalParticle_get_chi(part) * length);
+            track_polar_drift_single_particle(part, -0.17560359597982889 * length, h);
+            LocalParticle_set_px(part, LocalParticle_get_px(part) - 1.3512071919596578 * k0 * LocalParticle_get_chi(part) * length);
+            track_polar_drift_single_particle(part, 0.6756035959798289 * length, h);
             // track_polar_drift_single_particle(part, length/4, h);
             break;
         default:
