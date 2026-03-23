@@ -436,6 +436,15 @@ void track_magnet_drift_single_particle(
         case 6:
             track_solenoid_single_particle(part, length, ks, x0_solenoid, y0_solenoid);
             break;
+        case 7:
+            // track_polar_drift_single_particle(part, length/4, h);
+            LocalParticle_set_px(part, LocalParticle_get_px(part) - 0.25 * k0 * LocalParticle_get_chi(part) * length);
+            track_polar_drift_single_particle(part, length/2, h);
+            LocalParticle_set_px(part, LocalParticle_get_px(part) - 0.5 * k0 * LocalParticle_get_chi(part) * length);
+            track_polar_drift_single_particle(part, length/2, h);
+            LocalParticle_set_px(part, LocalParticle_get_px(part) - 0.25 * k0 * LocalParticle_get_chi(part) * length);
+            // track_polar_drift_single_particle(part, length/4, h);
+            break;
         default:
             break;
     }

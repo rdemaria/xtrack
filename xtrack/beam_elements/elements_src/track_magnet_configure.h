@@ -29,6 +29,7 @@ void configure_tracking_model(
     // model = 4: mat-kick-mat (previously called `expanded`)
     // model = 5: drift-kick-drift-exact
     // model = 6: drift-kick-drift-expanded
+    // model = 7: rot-kick-rot-k0
     // model = -1: kick only (not exposed in python)
     // model = -2: sol-kick-sol (not exposed in python)
 
@@ -69,6 +70,14 @@ void configure_tracking_model(
     }
     else if(model == -2){ // sol-kick-sol
         drift_model = 6; // solenoid
+    }
+    else if(model == 7){ // rot-kick-rot-k0
+        if (h_is_zero){
+            drift_model = 5; // bend without h
+        }
+        else{
+             drift_model = 7; // rot-kick-rot-k0
+        }
     }
     else{
         // This should never happen, but just in case
@@ -146,6 +155,18 @@ void configure_tracking_model(
         *k0_h_correction = k0;
         *k1_h_correction = k1;
         *kick_rot_frame = 1;
+    }
+    else if (drift_model == 7){ // rot-kick-rot-k0
+        *k0_drift = k0;
+        *k1_drift = 0.0;
+        *h_drift = h;
+        *ks_drift = 0.0;
+        *k0_kick = 0.0;
+        *k1_kick = k1;
+        *h_kick = h;
+        *k0_h_correction = k0;
+        *k1_h_correction = k1;
+        *kick_rot_frame = 0;
     }
 
 
