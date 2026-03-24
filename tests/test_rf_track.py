@@ -63,7 +63,7 @@ def test_rf_track_lattice():
     # Build the ring
     line = xt.Line(elements=elements, element_names=list(elements.keys()))
     line.particle_ref = xt.Particles(p0c=p0c, mass0=xt.PROTON_MASS_EV)
-    line.configure_bend_model(core='rot-kick-rot-simplified', edge=None)
+    line.configure_bend_model(edge=None)
     line.reset_s_at_end_turn = False
 
     ## Transfer lattice on context and compile tracking code=
