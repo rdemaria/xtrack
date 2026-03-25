@@ -29,7 +29,7 @@ void configure_tracking_model(
     // model = 4: mat-kick-mat (previously called `expanded`)
     // model = 5: drift-kick-drift-exact
     // model = 6: drift-kick-drift-expanded
-    // model = 7: rot-kick-rot-simplified
+    // model = 7: rot-kick-rot-low-order
     // model = -1: kick only (not exposed in python)
     // model = -2: sol-kick-sol (not exposed in python)
 
@@ -71,7 +71,7 @@ void configure_tracking_model(
     else if(model == -2){ // sol-kick-sol
         drift_model = 6; // solenoid
     }
-    else if(model == 7){ // rot-kick-rot-simplified
+    else if(model == 7){ // rot-kick-rot-low-order
         if (h_is_zero){
             drift_model = 1; // drift exact
         }

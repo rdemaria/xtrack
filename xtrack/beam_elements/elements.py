@@ -34,7 +34,7 @@ _INDEX_TO_MODEL_CURVED = {
     4: 'mat-kick-mat',
     5: 'drift-kick-drift-exact',
     6: 'drift-kick-drift-expanded',
-    7: 'rot-kick-rot-simplified',
+    7: 'rot-kick-rot-low-order',
 }
 _MODEL_TO_INDEX_CURVED = {k: v for v, k in _INDEX_TO_MODEL_CURVED.items()} | {'expanded': 4}
 
