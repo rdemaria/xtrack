@@ -1028,6 +1028,7 @@ def closed_orbit_correction(line, line_co_ref, correction_config,
             line.build_tracker()
 
         opt = line.match(
+            solve=False,
             solver=solver,
             verbose=verbose,
             restore_if_fail=restore_if_fail,
@@ -1044,6 +1045,7 @@ def closed_orbit_correction(line, line_co_ref, correction_config,
                 delta=tw_ref['delta', corr['start']],
             ),
             start=corr['start'], end=corr['end'])
+        opt.solve()
         opts[corr_name] = opt
     return opts
 
