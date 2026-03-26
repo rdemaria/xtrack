@@ -1998,9 +1998,10 @@ class Line:
 
         self._method_incompatible_with_compose()
 
-        closed_orbit_correction(self, reference, correction_config,
+        opts = closed_orbit_correction(self, reference, correction_config,
                                 solver=solver, verbose=verbose,
                                 restore_if_fail=restore_if_fail)
+        return opts
 
     def find_closed_orbit(self, co_guess=None, particle_ref=None,
                           co_search_settings={},
