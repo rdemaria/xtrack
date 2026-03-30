@@ -4495,8 +4495,11 @@ def test_environment_set_suppress_expression():
     env.new('q', xt.Quadrupole, length=1.0)
     env.set('q', knl=[0.0, '3*a'])
 
+    env.set('q', k1='2*a')
+    assert str(env.ref['q'].k1._expr) == "(2.0 * vars['a'])"
+    env.set('q', k1=0.3)
+    assert env.ref['q'].k1._expr is None
+
     assert str(env.ref['q'].knl[1]._expr) == "(3.0 * vars['a'])"
-
     env.set('q', knl=[0.0, 0.2])
-
     assert env.ref['q'].knl[1]._expr is None
