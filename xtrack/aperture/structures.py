@@ -14,15 +14,25 @@ FloatType = xo.Float64
 class Circle(xo.Struct):
     radius = FloatType
 
+    def __repr__(self):
+        return f"<Circle: radius={self.radius}>"
+
 
 class Rectangle(xo.Struct):
     half_width = FloatType
     half_height = FloatType
 
+    def __repr__(self):
+        return f"<Rectangle: half_width={self.half_width}, half_height={self.half_height}>"
+
 
 class Ellipse(xo.Struct):
     half_major = FloatType
     half_minor = FloatType
+
+    def __repr__(self):
+        return f"<Ellipse: half_major={self.half_major}, half_minor={self.half_minor}>"
+
 
 
 class RectEllipse(xo.Struct):
@@ -31,6 +41,10 @@ class RectEllipse(xo.Struct):
     half_major = FloatType
     half_minor = FloatType
 
+    def __repr__(self):
+        return f"<RectEllipse: half_width={self.half_width}, half_height={self.half_height}, half_major={self.half_major}, half_minor={self.half_minor}>"
+
+
 
 class Racetrack(xo.Struct):
     half_width = FloatType
@@ -38,19 +52,28 @@ class Racetrack(xo.Struct):
     half_major = FloatType
     half_minor = FloatType
 
+    def __repr__(self):
+        return f"<Racetrack: half_width={self.half_width}, half_height={self.half_height}, half_major={self.half_major}, half_minor={self.half_minor}>"
 
 class Octagon(xo.Struct):
     half_width = FloatType
     half_height = FloatType
     half_diagonal = FloatType
 
+    def __repr__(self):
+        return f"<Octagon: half_width={self.half_width}, half_height={self.half_height}, half_diagonal={self.half_diagonal}>"
 
 class Polygon(xo.Struct):
     vertices = FloatType[:, 2]
 
+    def __repr__(self):
+        return f"<Polygon: vertices={self.vertices.shape}>"
 
 class SVGShape(xo.Struct):
     svg_data = xo.String
+
+    def __repr__(self):
+        return f"<SVGShape: svg_data_length={len(self.svg_data)}>"
 
 
 ShapeTypes = Union[Circle, Rectangle, Ellipse, RectEllipse, Racetrack, Octagon, Polygon, SVGShape]
