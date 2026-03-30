@@ -308,7 +308,8 @@ class Environment:
             self.elements[name] = parent(**value_kwargs)
 
         self._set_kwargs(name=name, ref_kwargs=ref_kwargs, value_kwargs=value_kwargs,
-                    container=self._element_dict, container_refs=self._xdeps_eref)
+                    container=self._element_dict, container_refs=self._xdeps_eref,
+                    isinit=True)
 
         if extra is not None:
             assert isinstance(extra, dict)
@@ -418,7 +419,8 @@ class Environment:
             self.particles[name] = parent(**value_kwargs)
 
         self._set_kwargs(name=name, ref_kwargs=ref_kwargs, value_kwargs=value_kwargs,
-                    container=self._particles, container_refs=self._xdeps_pref)
+                    container=self._particles, container_refs=self._xdeps_pref,
+                    isinit=True)
 
         self.particles[name].prototype = prototype
 
@@ -1318,7 +1320,8 @@ class Environment:
                 type(self._element_dict[name]), kwargs, _eval)
             self._set_kwargs(
                 name=name, ref_kwargs=ref_kwargs, value_kwargs=value_kwargs,
-                container=self._element_dict, container_refs=self._xdeps_eref)
+                container=self._element_dict, container_refs=self._xdeps_eref,
+                isinit=False)
             if extra is not None:
                 assert isinstance(extra, dict), (
                     'Description must be a dictionary')
@@ -1522,7 +1525,8 @@ class Environment:
             if rr in deps:
                 self.ref_manager.unregister(task)
 
-    def _set_kwargs(self, name, ref_kwargs, value_kwargs, container, container_refs):
+    def _set_kwargs(self, name, ref_kwargs, value_kwargs, container, container_refs,
+                    isinit):
         for kk in value_kwargs:
             if hasattr(value_kwargs[kk], '__iter__') and not isinstance(value_kwargs[kk], str):
                 len_value = len(value_kwargs[kk])
@@ -1543,8 +1547,10 @@ class Environment:
             elif kk in ref_kwargs:
                 setattr(container_refs[name], kk, ref_kwargs[kk])
             else:
-                setattr(container[name], kk, value_kwargs[kk])
-
+                if not isinit:
+                    setattr(container_refs[name], kk, value_kwargs[kk])
+                else:
+                    setattr(container[name], kk, value_kwargs[kk])
     twiss = MultilineLegacy.twiss
     build_trackers = MultilineLegacy.build_trackers
     match = MultilineLegacy.match
