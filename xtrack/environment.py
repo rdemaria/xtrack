@@ -1551,6 +1551,7 @@ class Environment:
                     setattr(container_refs[name], kk, value_kwargs[kk])
                 else:
                     setattr(container[name], kk, value_kwargs[kk])
+
     twiss = MultilineLegacy.twiss
     build_trackers = MultilineLegacy.build_trackers
     match = MultilineLegacy.match
@@ -1558,9 +1559,6 @@ class Environment:
     install_beambeam_interactions = MultilineLegacy.install_beambeam_interactions
     configure_beambeam_interactions =  MultilineLegacy.configure_beambeam_interactions
     apply_filling_pattern = MultilineLegacy.apply_filling_pattern
-
-
-
 
 
 def _parse_kwargs(cls, kwargs, _eval):
