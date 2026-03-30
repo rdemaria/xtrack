@@ -1540,10 +1540,12 @@ class Environment:
                             f'Cannot set attribute {kk} of element {name}: '
                             f'length mismatch ({len(target)} vs {len_value})')
                 target[:len_value] = value_kwargs[kk]
-                if kk in ref_kwargs:
+                if kk in ref_kwargs or not isinit:
                     for ii, vvv in enumerate(value_kwargs[kk]):
                         if ref_kwargs[kk][ii] is not None:
                             getattr(container_refs[name], kk)[ii] = ref_kwargs[kk][ii]
+                        elif not isinit:
+                            getattr(container_refs[name], kk)[ii] = value_kwargs[kk][ii]
             elif kk in ref_kwargs:
                 setattr(container_refs[name], kk, ref_kwargs[kk])
             else:
