@@ -1527,6 +1527,31 @@ class Environment:
 
     def _set_kwargs(self, name, ref_kwargs, value_kwargs, container, container_refs,
                     isinit):
+        """
+        Set the attributes of an element, and the corresponding references in the
+        ref manager.
+
+        Parameters
+        ----------
+        name: str
+            Name of the element.
+        ref_kwargs: dict
+            Dictionary with the references to set. The keys are the attribute names,
+            and the values are the references.
+        value_kwargs: dict
+            Dictionary with the values to set. The keys are the attribute names,
+            and the values are the non-reference values.
+        container: dict
+            Dictionary with the elements.
+        container_refs: dict
+            Dictionary with the xdeps references to the elements.
+        isinit: bool
+            Whether the element is being initialized. If True, to gain speed,
+            we assume that no references are alredy present to the element
+            in the ref_manager, and we set numerical values directly on the
+            element without unregistering the refereces.
+        """
+
         for kk in value_kwargs:
             if hasattr(value_kwargs[kk], '__iter__') and not isinstance(value_kwargs[kk], str):
                 len_value = len(value_kwargs[kk])
