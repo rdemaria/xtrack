@@ -1166,14 +1166,15 @@ class Aperture:
         boxes: bool = True,
         sections: bool = True,
         box_alpha: float = 0.25,
-        hover: bool = True,
+        click: bool = True,
+        hover: bool | None = None,
     ):
         """Plot all installed pipes projected onto the floor plane.
 
         By default, this plots both the transverse aperture sections and the
         longitudinal footprint boxes over which the sections are active. Set
-        ``sections=False`` to plot only the boxes. Moving the mouse over a pipe
-        prints the installed pipe name to stdout when ``hover`` is true.
+        ``sections=False`` to plot only the boxes. Clicking on a pipe prints
+        the installed pipe name to stdout when ``click`` is true.
         """
         from matplotlib import pyplot as plt
         from matplotlib.collections import PolyCollection
@@ -1223,15 +1224,18 @@ class Aperture:
                 for window_start_seg, window_end_seg in window_segments
             )
 
-        hover_artists = []
+        if hover is not None:
+            click = hover
 
-        def _register_hover_artist(artist, name):
-            if not hover:
+        click_artists = []
+
+        def _register_click_artist(artist, name):
+            if not click:
                 return
             artist.set_picker(True)
             if hasattr(artist, 'set_pickradius'):
                 artist.set_pickradius(5)
-            hover_artists.append((artist, name))
+            click_artists.append((artist, name))
 
         def _profile_poly_in_axis(profile_position, len_points):
             profile = profile_position.profile.raw
@@ -1339,7 +1343,7 @@ class Aperture:
                         line_colour=line_colour,
                         label=colour_name,
                     )
-                    _register_hover_artist(artist, row.name)
+                    _register_click_artist(artist, row.name)
                     continue
 
                 for left_profile_position, right_profile_position in zip(pipe[:-1], pipe[1:]):
@@ -1358,7 +1362,7 @@ class Aperture:
                         line_colour=line_colour,
                         label=colour_name,
                     )
-                    _register_hover_artist(artist, row.name)
+                    _register_click_artist(artist, row.name)
 
         if sections:
             for row in pipe_table.rows:
@@ -1379,33 +1383,30 @@ class Aperture:
                     legend=False
                 )
                 for line in ax.lines[num_lines_before:]:
-                    _register_hover_artist(line, row.name)
+                    _register_click_artist(line, row.name)
 
         ax.set_xlabel('z [m]')
         ax.set_ylabel('x [m]')
         ax.autoscale_view()
 
-        if hover and hover_artists:
-            for cid in getattr(ax, '_xtrack_aperture_hover_cids', []):
+        if click and click_artists:
+            for cid in getattr(ax, '_xtrack_aperture_click_cids', []):
                 ax.figure.canvas.mpl_disconnect(cid)
 
-            last_hovered = {'name': None}
-
-            def _on_mouse_move(event):
-                hovered_name = None
+            def _on_button_press(event):
+                clicked_name = None
                 if event.inaxes is ax:
-                    for artist, name in reversed(hover_artists):
+                    for artist, name in reversed(click_artists):
                         contains, _ = artist.contains(event)
                         if contains:
-                            hovered_name = name
+                            clicked_name = name
                             break
 
-                if hovered_name is not None and hovered_name != last_hovered['name']:
-                    print(hovered_name, flush=True)
-                last_hovered['name'] = hovered_name
+                if clicked_name is not None:
+                    print(clicked_name, flush=True)
 
-            cid = ax.figure.canvas.mpl_connect('motion_notify_event', _on_mouse_move)
-            ax._xtrack_aperture_hover_cids = [cid]
+            cid = ax.figure.canvas.mpl_connect('button_press_event', _on_button_press)
+            ax._xtrack_aperture_click_cids = [cid]
 
         if legend:
             _deduplicate_legend(ax)
@@ -1430,8 +1431,8 @@ class Aperture:
     ):
         """Plot aperture pipes as interactive 3D VTK meshes.
 
-        Mouse interaction uses VTK's trackball camera controls. Moving the
-        mouse over a pipe prints the installed pipe name to stdout.
+        Mouse interaction uses VTK's trackball camera controls. Clicking on a
+        pipe prints the installed pipe name to stdout.
         """
         try:
             import vtk
@@ -1658,17 +1659,15 @@ class Aperture:
 
         picker = vtk.vtkCellPicker()
         picker.SetTolerance(0.0005)
-        last_hovered = {'name': None}
-
-        def _on_mouse_move(obj, event):
+        def _on_left_button_press(obj, event):
             x_pos, y_pos = interactor.GetEventPosition()
             picker.Pick(x_pos, y_pos, 0, renderer)
-            hovered_name = actor_names.get(_vtk_key(picker.GetActor()))
-            if hovered_name is not None and hovered_name != last_hovered['name']:
-                print(hovered_name, flush=True)
-            last_hovered['name'] = hovered_name
+            clicked_name = actor_names.get(_vtk_key(picker.GetActor()))
+            if clicked_name is not None:
+                print(clicked_name, flush=True)
+            interactor.GetInteractorStyle().OnLeftButtonDown()
 
-        interactor.AddObserver('MouseMoveEvent', _on_mouse_move)
+        interactor.AddObserver('LeftButtonPressEvent', _on_left_button_press)
 
         renderer.ResetCamera()
 

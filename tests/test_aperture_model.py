@@ -695,7 +695,7 @@ def test_plot_floor_projection_draws_aperture_boxes(test_context):
         ap.plot_floor_projection(ax=ax, sections=False, boxes=True, legend=False)
         assert len(ax.collections) == len(ap.pipe_positions)
         assert sum(len(collection.get_paths()) for collection in ax.collections) > 0
-        assert len(ax._xtrack_aperture_hover_cids) == 1
+        assert len(ax._xtrack_aperture_click_cids) == 1
     finally:
         plt.close(fig)
 
