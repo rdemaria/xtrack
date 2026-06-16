@@ -684,6 +684,43 @@ def test_get_pipe_table_handles_regular_and_wrapped_pipes(test_context):
 
 
 @for_all_test_contexts(excluding=('ContextPyopencl', 'ContextCupy'))
+def test_plot_floor_projection_draws_aperture_boxes(test_context):
+    plt = pytest.importorskip('matplotlib.pyplot')
+
+    line, model = _make_pipe_table_test_ring(test_context)
+    ap = Aperture(line, model, context=test_context, _skip_validity_check=True)
+
+    fig, ax = plt.subplots()
+    try:
+        ap.plot_floor_projection(ax=ax, sections=False, boxes=True, legend=False)
+        assert len(ax.collections) == len(ap.pipe_positions)
+        assert sum(len(collection.get_paths()) for collection in ax.collections) > 0
+        assert len(ax._xtrack_aperture_hover_cids) == 1
+    finally:
+        plt.close(fig)
+
+
+@for_all_test_contexts(excluding=('ContextPyopencl', 'ContextCupy'))
+def test_plot_3d_builds_vtk_scene(test_context):
+    pytest.importorskip('vtk')
+
+    line, model = _make_pipe_table_test_ring(test_context)
+    ap = Aperture(line, model, context=test_context, _skip_validity_check=True)
+
+    renderer, render_window, interactor = ap.plot_3d(
+        len_points=8,
+        longitudinal_points=3,
+        start=False,
+    )
+
+    try:
+        assert renderer.GetActors().GetNumberOfItems() == len(ap.pipe_positions)
+    finally:
+        interactor.SetRenderWindow(None)
+        render_window.Finalize()
+
+
+@for_all_test_contexts(excluding=('ContextPyopencl', 'ContextCupy'))
 def test_pipe_overlap_validation_allows_wrapped_and_regular_non_overlapping_pipes(test_context):
     line, model = _make_pipe_table_test_ring(
         test_context,
