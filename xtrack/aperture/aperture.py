@@ -1157,7 +1157,7 @@ class Aperture:
     def plot_floor_projection(
         self,
         ax=None,
-        len_points=4,
+        len_points=64,
         colour: Literal['profile', 'pipe'] = 'pipe',
         legend=True,
         origin: str | None = None,
@@ -1417,7 +1417,7 @@ class Aperture:
 
     def plot_3d(
         self,
-        len_points=32,
+        len_points=64,
         longitudinal_points=8,
         colors=None,
         opacity=0.35,
