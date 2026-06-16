@@ -1274,7 +1274,7 @@ class Aperture:
         ax=None,
         len_points=64,
         colour: Literal['profile', 'pipe'] = 'pipe',
-        legend=True,
+        legend=False,
         origin: str | None = None,
         s_range: tuple[float, float] | None = None,
         resolution: float | None = None,
