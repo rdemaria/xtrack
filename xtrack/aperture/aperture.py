@@ -590,8 +590,10 @@ class Aperture:
 
     def get_aperture_sigmas_at_s(
             self,
-            s_positions: Iterable[float],
+            s_positions: Iterable[float] | None = None,
             twiss_init: TwissInit | None = None,
+            s_range: tuple[float, float] | None = None,
+            resolution: float | None = None,
             method: Literal['bisection', 'rays', 'exact'] = 'rays',
             envelopes_num_points: int = 36,
             num_rays: int = 32,
@@ -603,9 +605,17 @@ class Aperture:
         Parameters
         ----------
         s_positions
-            List of s positions at which to calculate the sigmas.
+            List of s positions at which to calculate the sigmas. If omitted,
+            ``s_range`` must be provided.
         twiss_init
             Optionally provided initial twiss conditions.
+        s_range
+            Optional ``(start, end)`` range in meters along s. When provided,
+            positions are generated from ``resolution`` and all profile
+            locations and profile-span bounds overlapping the range are added.
+            Wrapped ranges are supported for rings.
+        resolution
+            Spacing in meters for regular sampling when ``s_range`` is used.
         method
             A method to use for the computation:
             - 'rays' - the aperture sigma is estimated from sampled rays and the minimum over the sampled directions
@@ -634,6 +644,11 @@ class Aperture:
         - if ``output_max_envelopes`` is true, ``table`` also contains ``envelope``.
         - ``sliced_twiss`` is the twiss table computed as part of the calculation.
         """
+        if s_range is not None:
+            s_positions = self._get_s_positions_for_range(s_range=s_range, resolution=resolution)
+        elif s_positions is None:
+            raise ValueError('Either `s_positions` or `s_range` must be provided.')
+
         sliced_twiss = self._sliced_twiss_at_s(s_positions=s_positions, twiss_init=twiss_init)
         num_slices = len(sliced_twiss.s)
         twiss_at_s = TwissData.from_twiss_table(self.line.particle_ref, sliced_twiss)
@@ -893,6 +908,99 @@ class Aperture:
         """Return a local coordinate system (each represented by a homogeneous matrix) at all ``s_positions``."""
         sv_resampled = self._survey_data.resample(s_positions)
         return sv_resampled.pose.to_nparray()
+
+    def _get_s_positions_for_range(
+            self,
+            s_range: tuple[float, float],
+            resolution: float | None,
+    ) -> np.ndarray:
+        """Build sampling positions from a range and aperture profile spans."""
+        if len(s_range) != 2:
+            raise ValueError('`s_range` must be a two-tuple `(start, end)`.')
+
+        start, end = (float(s_range[0]), float(s_range[1]))
+        if not np.isfinite(start) or not np.isfinite(end):
+            raise ValueError('`s_range` values must be finite.')
+        if resolution is not None and resolution <= 0:
+            raise ValueError('`resolution` must be positive.')
+        if not self.is_ring and start > end:
+            raise ValueError('`s_range` start must be smaller than or equal to its end.')
+
+        line_length = self.line.get_length()
+        if self.is_ring:
+            start = float(np.mod(start, line_length))
+            end = float(np.mod(end, line_length))
+
+        segments = _split_wrapped_s_interval(
+            start,
+            end,
+            line_length=line_length,
+            wrap=self.is_ring,
+            s_tol=self.s_tol,
+        )
+
+        points = [start, end]
+
+        if resolution is not None:
+            for seg_start, seg_end in segments:
+                if seg_end < seg_start + self.s_tol:
+                    points.extend([seg_start, seg_end])
+                    continue
+
+                grid = np.arange(seg_start, seg_end, resolution, dtype=FloatType._dtype)
+                points.extend(grid.tolist())
+                points.append(seg_end)
+
+        def _point_in_segments(point):
+            if self.is_ring:
+                point = float(np.mod(point, line_length))
+            return any(
+                seg_start - self.s_tol <= point <= seg_end + self.s_tol
+                for seg_start, seg_end in segments
+            )
+
+        def _interval_overlaps_segments(interval_start, interval_end):
+            bound_segments = _split_wrapped_s_interval(
+                interval_start,
+                interval_end,
+                line_length=line_length,
+                wrap=self.is_ring,
+                s_tol=self.s_tol,
+            )
+            return any(
+                bound_start <= seg_end + self.s_tol and seg_start <= bound_end + self.s_tol
+                for bound_start, bound_end in bound_segments
+                for seg_start, seg_end in segments
+            )
+
+        ap_bounds = self._aperture_bounds
+        bound_s = ap_bounds.s_positions.to_nparray()
+        bound_s_start = ap_bounds.s_start.to_nparray()
+        bound_s_end = ap_bounds.s_end.to_nparray()
+
+        for profile_s, span_start, span_end in zip(bound_s, bound_s_start, bound_s_end):
+            if not (np.isfinite(profile_s) and np.isfinite(span_start) and np.isfinite(span_end)):
+                continue
+            if not _interval_overlaps_segments(float(span_start), float(span_end)):
+                continue
+            for point in (profile_s, span_start, span_end):
+                if _point_in_segments(float(point)):
+                    points.append(float(point))
+
+        points = np.asarray(points, dtype=FloatType._dtype)
+        if self.is_ring:
+            points = np.mod(points, line_length)
+        points = points[np.isfinite(points)]
+        points.sort(kind='stable')
+
+        if len(points) == 0:
+            return points
+
+        unique_points = [float(points[0])]
+        for point in points[1:]:
+            if abs(point - unique_points[-1]) > self.s_tol:
+                unique_points.append(float(point))
+        return np.asarray(unique_points, dtype=FloatType._dtype)
 
     def cross_sections_at_element(
         self,

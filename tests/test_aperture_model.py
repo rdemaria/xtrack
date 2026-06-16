@@ -721,6 +721,33 @@ def test_plot_3d_builds_vtk_scene(test_context):
 
 
 @for_all_test_contexts(excluding=('ContextPyopencl', 'ContextCupy'))
+def test_get_s_positions_for_range_adds_profile_span_locations(test_context):
+    line, model = _make_pipe_table_test_ring(test_context)
+    ap = Aperture(line, model, context=test_context, _skip_validity_check=True)
+
+    positions = ap._get_s_positions_for_range(s_range=(9.0, 21.0), resolution=5.0)
+
+    xo.assert_allclose(positions[0], 9.0, atol=1e-12, rtol=0)
+    xo.assert_allclose(positions[-1], 21.0, atol=1e-12, rtol=0)
+    for value in (9.0, 14.0, 19.0, 21.0):
+        assert np.any(np.isclose(positions, value, atol=1e-12, rtol=0))
+
+    bounds_table = ap.get_bounds_table()
+    rows = bounds_table.rows[(bounds_table.s >= 9.0) & (bounds_table.s <= 21.0)]
+    for span_start, profile_s, span_end in zip(rows.s_start, rows.s, rows.s_end):
+        for value in (span_start, profile_s, span_end):
+            assert np.any(np.isclose(positions, float(value), atol=ap.s_tol, rtol=0))
+
+
+def test_get_aperture_sigmas_at_s_requires_positions_or_range(context):
+    line, model = _make_pipe_table_test_ring(context)
+    ap = Aperture(line, model, context=context, _skip_validity_check=True)
+
+    with pytest.raises(ValueError, match='Either `s_positions` or `s_range`'):
+        ap.get_aperture_sigmas_at_s()
+
+
+@for_all_test_contexts(excluding=('ContextPyopencl', 'ContextCupy'))
 def test_pipe_overlap_validation_allows_wrapped_and_regular_non_overlapping_pipes(test_context):
     line, model = _make_pipe_table_test_ring(
         test_context,
