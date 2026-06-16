@@ -2215,12 +2215,8 @@ class Line:
         if not self._has_valid_tracker():
             self.build_tracker()
 
-        if reverse is None:
-            reverse = self.twiss_default.get('reverse', False)
-
         return survey_from_line(self, X0=X0, Y0=Y0, Z0=Z0, theta0=theta0,
-                                   phi0=phi0, psi0=psi0, element0=element0,
-                                   reverse=reverse)
+                                   phi0=phi0, psi0=psi0, element0=element0)
 
     @doc_group("Matching and Corrections")
     def correct_trajectory(self, run=True, n_iter='auto', start=None, end=None,
@@ -5490,7 +5486,7 @@ class Line:
 
         Returns
         -------
-        vars : object
+        vars : xtrack.environment.EnvVars
             Dictionary-like container of variables.
         """
         if hasattr(self, '_in_multiline') and self._in_multiline is not None:
@@ -6210,6 +6206,8 @@ class Line:
                 '_own_ks': AttrDefinition(name='ks'),
                 '_own_ks_profile_0': AttrDefinition(name='ks_profile', index=0),
                 '_own_ks_profile_1': AttrDefinition(name='ks_profile', index=1),
+                '_own_bs_mean': AttrDefinition(name='bs', index=4),
+                '_own_scale_b': AttrDefinition(name='scale_b'),
 
                 '_own_k0': AttrDefinition(name='k0'),
                 '_own_k1': AttrDefinition(name='k1'),
@@ -6447,6 +6445,7 @@ class Line:
                 'k5sl': lambda attr: attr['_k5sl_no_rel'] + attr['_k5sl_rel'] * attr['_main_strength'],
                 'ks': lambda attr: (attr['_own_ks'] + attr['_parent_ks'] * attr._inherit_strengths
                                     + 0.5 * (attr['_own_ks_profile_0'] + attr['_own_ks_profile_1'])),
+                'bs': lambda attr: attr['_own_bs_mean'] * attr['_own_scale_b'],
                 'hkick': lambda attr: attr["angle"] - attr["k0l"],
                 'vkick': lambda attr: attr["k0sl"],
             }
@@ -6549,6 +6548,14 @@ class Line:
 
 
 class LineTable(Table):
+    """
+    Table returned by :meth:`xtrack.Line.get_table`.
+
+    ``LineTable`` stores one row per line element plus the ``'_end_point'`` row.
+    It contains element names, longitudinal positions, element types, lengths,
+    and other line-description columns. It extends :class:`xtrack.Table` and
+    supports the standard table row and column selection interface.
+    """
 
     # Messages to be shown when accessing deprecated fields
     _DEPRECATED_FIELDS = {
