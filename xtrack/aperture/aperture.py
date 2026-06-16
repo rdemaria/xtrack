@@ -1067,9 +1067,11 @@ class Aperture:
 
     def plot_extents(
         self,
-        s_positions: Collection[float],
+        s_positions: Collection[float] | None = None,
         sigmas: float | None = None,
         twiss_init: TwissInit | None = None,
+        s_range: tuple[float, float] | None = None,
+        resolution: float | None = None,
         method: Literal['bisection', 'rays', 'exact'] = 'rays',
         envelopes_num_points: int = 64,
         include_aper_tols: bool = False,
@@ -1077,6 +1079,11 @@ class Aperture:
         axs=None,
     ):
         """Plot beam envelope and aperture extents over `s`."""
+        if s_range is not None:
+            s_positions = self._get_s_positions_for_range(s_range=s_range, resolution=resolution)
+        elif s_positions is None:
+            raise ValueError('Either `s_positions` or `s_range` must be provided.')
+
         s_positions = np.asarray(s_positions, dtype=FloatType._dtype)
         plot_s_positions = np.asarray(
             s_positions if plot_s_positions is None else plot_s_positions,
@@ -1270,6 +1277,7 @@ class Aperture:
         legend=True,
         origin: str | None = None,
         s_range: tuple[float, float] | None = None,
+        resolution: float | None = None,
         aspect: Literal['auto', 'equal'] = 'auto',
         boxes: bool = True,
         sections: bool = True,
@@ -1293,7 +1301,9 @@ class Aperture:
         origin_s = 0.0
         plot_shift = np.identity(4)
 
-        if s_range and s_range[0] > s_range[1]:
+        if resolution is not None and resolution <= 0:
+            raise ValueError('`resolution` must be positive.')
+        if s_range and s_range[0] > s_range[1] and not self.is_ring:
             raise ValueError('The `origin` pipe position is outside of the `s_range` specified.')
 
         if origin is not None:
@@ -1316,7 +1326,7 @@ class Aperture:
             if not self.is_ring:
                 return s_end >= window_start - self.s_tol and s_start <= window_end + self.s_tol
 
-            window_width = s_range[1] - s_range[0]
+            window_width = (window_end - window_start) % line_length
             if window_width >= line_length - self.s_tol:
                 return True
 
@@ -1374,33 +1384,47 @@ class Aperture:
             poly_world = transform @ profile_in_pipe
             return poly_world[[2, 0]].T
 
+        def _segment_s_values(left_s, right_s):
+            if resolution is None:
+                return np.array([left_s, right_s], dtype=FloatType._dtype)
+
+            length = right_s - left_s
+            if abs(length) <= self.s_tol:
+                return np.array([left_s, right_s], dtype=FloatType._dtype)
+
+            step = np.copysign(resolution, length)
+            values = np.arange(left_s, right_s, step, dtype=FloatType._dtype)
+            if len(values) == 0 or abs(values[0] - left_s) > self.s_tol:
+                values = np.r_[left_s, values]
+            if abs(values[-1] - right_s) > self.s_tol:
+                values = np.r_[values, right_s]
+            return values
+
         def _plot_segment_box(transform, pipe, left_profile_position, right_profile_position, line_colour, label):
             h = pipe.curvature
             left_poly_axis = _profile_poly_in_axis(left_profile_position, len_points)
             right_poly_axis = _profile_poly_in_axis(right_profile_position, len_points)
+            left_s = left_profile_position.shift_s
+            right_s = right_profile_position.shift_s
+            s_values = _segment_s_values(left_s, right_s)
 
-            left_in_pipe = arc_matrix(
-                length=left_profile_position.shift_s,
-                angle=h * left_profile_position.shift_s,
-                tilt=0,
-            ) @ left_poly_axis
-            right_in_pipe = arc_matrix(
-                length=right_profile_position.shift_s,
-                angle=h * right_profile_position.shift_s,
-                tilt=0,
-            ) @ right_poly_axis
-            left_poly = (transform @ left_in_pipe)[[2, 0]].T
-            right_poly = (transform @ right_in_pipe)[[2, 0]].T
+            rings = []
+            for s_val in s_values:
+                weight = 0.0 if abs(right_s - left_s) <= self.s_tol else (s_val - left_s) / (right_s - left_s)
+                poly_axis = (1.0 - weight) * left_poly_axis + weight * right_poly_axis
+                poly_in_pipe = arc_matrix(length=s_val, angle=h * s_val, tilt=0) @ poly_axis
+                rings.append((transform @ poly_in_pipe)[[2, 0]].T)
 
             polygons = []
-            for ii in range(len(left_poly)):
-                jj = (ii + 1) % len(left_poly)
-                polygons.append([
-                    left_poly[ii],
-                    left_poly[jj],
-                    right_poly[jj],
-                    right_poly[ii],
-                ])
+            for left_poly, right_poly in zip(rings[:-1], rings[1:]):
+                for ii in range(len(left_poly)):
+                    jj = (ii + 1) % len(left_poly)
+                    polygons.append([
+                        left_poly[ii],
+                        left_poly[jj],
+                        right_poly[jj],
+                        right_poly[ii],
+                    ])
 
             collection = PolyCollection(
                 polygons,
@@ -1532,6 +1556,7 @@ class Aperture:
         show_edges=True,
         origin: str | None = None,
         s_range: tuple[float, float] | None = None,
+        resolution: float | None = None,
         window_size: tuple[int, int] = (1200, 800),
         background: tuple[float, float, float] = (1.0, 1.0, 1.0),
         z_compression: float = 0.01,
@@ -1553,6 +1578,8 @@ class Aperture:
             raise ValueError('`len_points` must be at least 3.')
         if longitudinal_points < 2:
             raise ValueError('`longitudinal_points` must be at least 2.')
+        if resolution is not None and resolution <= 0:
+            raise ValueError('`resolution` must be positive.')
         if z_compression <= 0:
             raise ValueError('`z_compression` must be positive.')
 
@@ -1561,7 +1588,7 @@ class Aperture:
         origin_s = 0.0
         plot_shift = np.identity(4)
 
-        if s_range and s_range[0] > s_range[1]:
+        if s_range and s_range[0] > s_range[1] and not self.is_ring:
             raise ValueError('The `origin` pipe position is outside of the `s_range` specified.')
 
         if origin is not None:
@@ -1584,7 +1611,7 @@ class Aperture:
             if not self.is_ring:
                 return s_end >= window_start - self.s_tol and s_start <= window_end + self.s_tol
 
-            window_width = s_range[1] - s_range[0]
+            window_width = (window_end - window_start) % line_length
             if window_width >= line_length - self.s_tol:
                 return True
 
@@ -1620,6 +1647,22 @@ class Aperture:
             )
             return profile_in_axis @ poly_3d
 
+        def _segment_s_values(left_s, right_s):
+            if resolution is None:
+                return np.linspace(left_s, right_s, longitudinal_points)
+
+            length = right_s - left_s
+            if abs(length) <= self.s_tol:
+                return np.array([left_s, right_s], dtype=FloatType._dtype)
+
+            step = np.copysign(resolution, length)
+            values = np.arange(left_s, right_s, step, dtype=FloatType._dtype)
+            if len(values) == 0 or abs(values[0] - left_s) > self.s_tol:
+                values = np.r_[left_s, values]
+            if abs(values[-1] - right_s) > self.s_tol:
+                values = np.r_[values, right_s]
+            return values
+
         def _rings_for_pipe(transform, pipe):
             h = pipe.curvature
 
@@ -1640,7 +1683,7 @@ class Aperture:
                 right_axis = _profile_poly_in_axis(right_profile_position)
                 left_s = left_profile_position.shift_s
                 right_s = right_profile_position.shift_s
-                s_values = np.linspace(left_s, right_s, longitudinal_points)
+                s_values = _segment_s_values(left_s, right_s)
 
                 for i_s, s_val in enumerate(s_values):
                     if i_seg > 0 and i_s == 0:

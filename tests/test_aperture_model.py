@@ -692,7 +692,14 @@ def test_plot_floor_projection_draws_aperture_boxes(test_context):
 
     fig, ax = plt.subplots()
     try:
-        ap.plot_floor_projection(ax=ax, sections=False, boxes=True, legend=False)
+        ap.plot_floor_projection(
+            ax=ax,
+            len_points=8,
+            resolution=5.0,
+            sections=False,
+            boxes=True,
+            legend=False,
+        )
         assert len(ax.collections) == len(ap.pipe_positions)
         assert sum(len(collection.get_paths()) for collection in ax.collections) > 0
         assert len(ax._xtrack_aperture_click_cids) == 1
@@ -710,6 +717,7 @@ def test_plot_3d_builds_vtk_scene(test_context):
     renderer, render_window, interactor = ap.plot_3d(
         len_points=8,
         longitudinal_points=3,
+        resolution=5.0,
         start=False,
     )
 
@@ -745,6 +753,52 @@ def test_get_aperture_sigmas_at_s_requires_positions_or_range(context):
 
     with pytest.raises(ValueError, match='Either `s_positions` or `s_range`'):
         ap.get_aperture_sigmas_at_s()
+
+
+@for_all_test_contexts(excluding=('ContextPyopencl', 'ContextCupy'))
+def test_plot_extents_accepts_s_range_and_resolution(test_context, monkeypatch):
+    plt = pytest.importorskip('matplotlib.pyplot')
+
+    line, model = _make_pipe_table_test_ring(test_context)
+    ap = Aperture(line, model, context=test_context, _skip_validity_check=True)
+    expected_positions = ap._get_s_positions_for_range(s_range=(9.0, 21.0), resolution=5.0)
+    seen = {}
+
+    def fake_get_envelope_at_s(s_positions, **kwargs):
+        seen['envelope_s'] = np.asarray(s_positions)
+        envelopes = np.zeros((len(s_positions), 4, 2), dtype=float)
+        envelopes[:, :, 0] = np.array([-0.01, 0.01, 0.01, -0.01])
+        envelopes[:, :, 1] = np.array([-0.02, -0.02, 0.02, 0.02])
+        return envelopes, None
+
+    def fake_cross_sections_at_s(s_positions, extents=False):
+        seen['sections_s'] = np.asarray(s_positions)
+        s_positions = np.asarray(s_positions)
+        zeros = np.zeros(len(s_positions))
+        return Table(
+            data={
+                'index': np.arange(len(s_positions)),
+                's': s_positions,
+                'min_x': -0.03 * np.ones(len(s_positions)),
+                'max_x': 0.03 * np.ones(len(s_positions)),
+                'min_y': -0.04 * np.ones(len(s_positions)),
+                'max_y': 0.04 * np.ones(len(s_positions)),
+                'tol_r': zeros,
+                'tol_x': zeros,
+                'tol_y': zeros,
+            },
+            index='index',
+        )
+
+    monkeypatch.setattr(ap, 'get_envelope_at_s', fake_get_envelope_at_s)
+    monkeypatch.setattr(ap, 'cross_sections_at_s', fake_cross_sections_at_s)
+
+    fig, axs = ap.plot_extents(s_range=(9.0, 21.0), resolution=5.0, sigmas=1.0)
+    try:
+        xo.assert_allclose(seen['envelope_s'], expected_positions, atol=1e-12, rtol=0)
+        xo.assert_allclose(seen['sections_s'], expected_positions, atol=1e-12, rtol=0)
+    finally:
+        plt.close(fig)
 
 
 @for_all_test_contexts(excluding=('ContextPyopencl', 'ContextCupy'))
