@@ -486,7 +486,7 @@ class PipeView:
         # Plot setup
         import matplotlib.pyplot as plt
         ax = ax or plt.gca()
-        ax.set_aspect('equal')
+        #ax.set_aspect('equal')
         ax.set_title(f'{self.name}')
         palette = plt.rcParams['axes.prop_cycle'].by_key().get('color', ['C0'])
 

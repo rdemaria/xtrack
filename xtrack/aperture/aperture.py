@@ -25,9 +25,9 @@ from xtrack.line import Line
 from xtrack.progress_indicator import progress
 from xtrack.survey import survey_relative_transform
 from xtrack.aperture.views import (
-    PipePositionsView, PipesView, ProfilesView, _deduplicate_legend,
+    PipePositionsView, PipesView, ProfilesView, _deduplicate_legend, _hashed_color,
 )
-from xtrack.aperture.transform import transform_matrix
+from xtrack.aperture.transform import arc_matrix, transform_matrix
 
 DTypeFloat = np.dtype[FloatType._dtype]
 NDArrayNx2 = np.ndarray[tuple[int, Literal[2]], DTypeFloat]
@@ -590,8 +590,10 @@ class Aperture:
 
     def get_aperture_sigmas_at_s(
             self,
-            s_positions: Iterable[float],
+            s_positions: Iterable[float] | None = None,
             twiss_init: TwissInit | None = None,
+            s_range: tuple[float, float] | None = None,
+            resolution: float | None = None,
             method: Literal['bisection', 'rays', 'exact'] = 'rays',
             envelopes_num_points: int = 36,
             num_rays: int = 32,
@@ -603,9 +605,17 @@ class Aperture:
         Parameters
         ----------
         s_positions
-            List of s positions at which to calculate the sigmas.
+            List of s positions at which to calculate the sigmas. If omitted,
+            ``s_range`` must be provided.
         twiss_init
             Optionally provided initial twiss conditions.
+        s_range
+            Optional ``(start, end)`` range in meters along s. When provided,
+            positions are generated from ``resolution`` and all profile
+            locations and profile-span bounds overlapping the range are added.
+            Wrapped ranges are supported for rings.
+        resolution
+            Spacing in meters for regular sampling when ``s_range`` is used.
         method
             A method to use for the computation:
             - 'rays' - the aperture sigma is estimated from sampled rays and the minimum over the sampled directions
@@ -634,6 +644,11 @@ class Aperture:
         - if ``output_max_envelopes`` is true, ``table`` also contains ``envelope``.
         - ``sliced_twiss`` is the twiss table computed as part of the calculation.
         """
+        if s_range is not None:
+            s_positions = self._get_s_positions_for_range(s_range=s_range, resolution=resolution)
+        elif s_positions is None:
+            raise ValueError('Either `s_positions` or `s_range` must be provided.')
+
         sliced_twiss = self._sliced_twiss_at_s(s_positions=s_positions, twiss_init=twiss_init)
         num_slices = len(sliced_twiss.s)
         twiss_at_s = TwissData.from_twiss_table(self.line.particle_ref, sliced_twiss)
@@ -894,6 +909,99 @@ class Aperture:
         sv_resampled = self._survey_data.resample(s_positions)
         return sv_resampled.pose.to_nparray()
 
+    def _get_s_positions_for_range(
+            self,
+            s_range: tuple[float, float],
+            resolution: float | None,
+    ) -> np.ndarray:
+        """Build sampling positions from a range and aperture profile spans."""
+        if len(s_range) != 2:
+            raise ValueError('`s_range` must be a two-tuple `(start, end)`.')
+
+        start, end = (float(s_range[0]), float(s_range[1]))
+        if not np.isfinite(start) or not np.isfinite(end):
+            raise ValueError('`s_range` values must be finite.')
+        if resolution is not None and resolution <= 0:
+            raise ValueError('`resolution` must be positive.')
+        if not self.is_ring and start > end:
+            raise ValueError('`s_range` start must be smaller than or equal to its end.')
+
+        line_length = self.line.get_length()
+        if self.is_ring:
+            start = float(np.mod(start, line_length))
+            end = float(np.mod(end, line_length))
+
+        segments = _split_wrapped_s_interval(
+            start,
+            end,
+            line_length=line_length,
+            wrap=self.is_ring,
+            s_tol=self.s_tol,
+        )
+
+        points = [start, end]
+
+        if resolution is not None:
+            for seg_start, seg_end in segments:
+                if seg_end < seg_start + self.s_tol:
+                    points.extend([seg_start, seg_end])
+                    continue
+
+                grid = np.arange(seg_start, seg_end, resolution, dtype=FloatType._dtype)
+                points.extend(grid.tolist())
+                points.append(seg_end)
+
+        def _point_in_segments(point):
+            if self.is_ring:
+                point = float(np.mod(point, line_length))
+            return any(
+                seg_start - self.s_tol <= point <= seg_end + self.s_tol
+                for seg_start, seg_end in segments
+            )
+
+        def _interval_overlaps_segments(interval_start, interval_end):
+            bound_segments = _split_wrapped_s_interval(
+                interval_start,
+                interval_end,
+                line_length=line_length,
+                wrap=self.is_ring,
+                s_tol=self.s_tol,
+            )
+            return any(
+                bound_start <= seg_end + self.s_tol and seg_start <= bound_end + self.s_tol
+                for bound_start, bound_end in bound_segments
+                for seg_start, seg_end in segments
+            )
+
+        ap_bounds = self._aperture_bounds
+        bound_s = ap_bounds.s_positions.to_nparray()
+        bound_s_start = ap_bounds.s_start.to_nparray()
+        bound_s_end = ap_bounds.s_end.to_nparray()
+
+        for profile_s, span_start, span_end in zip(bound_s, bound_s_start, bound_s_end):
+            if not (np.isfinite(profile_s) and np.isfinite(span_start) and np.isfinite(span_end)):
+                continue
+            if not _interval_overlaps_segments(float(span_start), float(span_end)):
+                continue
+            for point in (profile_s, span_start, span_end):
+                if _point_in_segments(float(point)):
+                    points.append(float(point))
+
+        points = np.asarray(points, dtype=FloatType._dtype)
+        if self.is_ring:
+            points = np.mod(points, line_length)
+        points = points[np.isfinite(points)]
+        points.sort(kind='stable')
+
+        if len(points) == 0:
+            return points
+
+        unique_points = [float(points[0])]
+        for point in points[1:]:
+            if abs(point - unique_points[-1]) > self.s_tol:
+                unique_points.append(float(point))
+        return np.asarray(unique_points, dtype=FloatType._dtype)
+
     def cross_sections_at_element(
         self,
         element_name: str,
@@ -959,9 +1067,11 @@ class Aperture:
 
     def plot_extents(
         self,
-        s_positions: Collection[float],
+        s_positions: Collection[float] | None = None,
         sigmas: float | None = None,
         twiss_init: TwissInit | None = None,
+        s_range: tuple[float, float] | None = None,
+        resolution: float | None = None,
         method: Literal['bisection', 'rays', 'exact'] = 'rays',
         envelopes_num_points: int = 64,
         include_aper_tols: bool = False,
@@ -969,6 +1079,11 @@ class Aperture:
         axs=None,
     ):
         """Plot beam envelope and aperture extents over `s`."""
+        if s_range is not None:
+            s_positions = self._get_s_positions_for_range(s_range=s_range, resolution=resolution)
+        elif s_positions is None:
+            raise ValueError('Either `s_positions` or `s_range` must be provided.')
+
         s_positions = np.asarray(s_positions, dtype=FloatType._dtype)
         plot_s_positions = np.asarray(
             s_positions if plot_s_positions is None else plot_s_positions,
@@ -1157,15 +1272,28 @@ class Aperture:
     def plot_floor_projection(
         self,
         ax=None,
-        len_points=4,
+        len_points=64,
         colour: Literal['profile', 'pipe'] = 'pipe',
-        legend=True,
+        legend=False,
         origin: str | None = None,
         s_range: tuple[float, float] | None = None,
+        resolution: float | None = None,
         aspect: Literal['auto', 'equal'] = 'auto',
+        boxes: bool = True,
+        sections: bool = True,
+        box_alpha: float = 0.25,
+        click: bool = True,
+        hover: bool | None = None,
     ):
-        """Plot all installed pipes projected onto the floor plane."""
+        """Plot all installed pipes projected onto the floor plane.
+
+        By default, this plots both the transverse aperture sections and the
+        longitudinal footprint boxes over which the sections are active. Set
+        ``sections=False`` to plot only the boxes. Clicking on a pipe prints
+        the installed pipe name to stdout when ``click`` is true.
+        """
         from matplotlib import pyplot as plt
+        from matplotlib.collections import PolyCollection
         ax = ax or plt.gca()
 
         pipe_table = self.get_pipe_table()
@@ -1173,7 +1301,9 @@ class Aperture:
         origin_s = 0.0
         plot_shift = np.identity(4)
 
-        if s_range and s_range[0] > s_range[1]:
+        if resolution is not None and resolution <= 0:
+            raise ValueError('`resolution` must be positive.')
+        if s_range and s_range[0] > s_range[1] and not self.is_ring:
             raise ValueError('The `origin` pipe position is outside of the `s_range` specified.')
 
         if origin is not None:
@@ -1186,7 +1316,7 @@ class Aperture:
             origin_transform = origin_sv_ref_transform @ origin_pipe_position.transformation
             plot_shift = np.linalg.inv(origin_transform)
 
-        def _in_s_range(row) -> bool:
+        def _in_s_range(s_start, s_end) -> bool:
             if s_range is None:
                 return True
 
@@ -1194,14 +1324,14 @@ class Aperture:
             window_end = origin_s + s_range[1]
 
             if not self.is_ring:
-                return row.s_end >= window_start - self.s_tol and row.s_start <= window_end + self.s_tol
+                return s_end >= window_start - self.s_tol and s_start <= window_end + self.s_tol
 
-            window_width = s_range[1] - s_range[0]
+            window_width = (window_end - window_start) % line_length
             if window_width >= line_length - self.s_tol:
                 return True
 
             row_segments = _split_wrapped_s_interval(
-                row.s_start, row.s_end, line_length=line_length, wrap=True, s_tol=self.s_tol,
+                s_start, s_end, line_length=line_length, wrap=True, s_tol=self.s_tol,
             )
             window_segments = _split_wrapped_s_interval(
                 window_start, window_end, line_length=line_length, wrap=True, s_tol=self.s_tol,
@@ -1212,22 +1342,203 @@ class Aperture:
                 for window_start_seg, window_end_seg in window_segments
             )
 
-        for row in pipe_table.rows:
-            if not _in_s_range(row):
-                continue
+        if hover is not None:
+            click = hover
 
-            pipe_position = self.pipe_positions[row.name]
-            pipe = pipe_position.pipe
-            sv_ref_transform = survey_relative_transform(self.survey, 0, pipe_position.survey_reference_name)
-            transform = plot_shift @ sv_ref_transform @ pipe_position.transformation
-            pipe.plot_projection(
-                ax=ax,
-                plane='zx',
-                transform=transform,
-                len_points=len_points,
-                colour=colour,
-                legend=False
+        click_artists = []
+
+        def _register_click_artist(artist, name):
+            if not click:
+                return
+            artist.set_picker(True)
+            if hasattr(artist, 'set_pickradius'):
+                artist.set_pickradius(5)
+            click_artists.append((artist, name))
+
+        def _profile_poly_in_axis(profile_position, len_points):
+            profile = profile_position.profile.raw
+            poly_2d = profile.build_polygon(len_points)
+            poly_3d = np.column_stack((
+                poly_2d,
+                np.zeros(len(poly_2d)),
+                np.ones(len(poly_2d)),
+            )).T
+            profile_in_axis = transform_matrix(
+                shift_x=profile_position.shift_x,
+                shift_y=profile_position.shift_y,
+                shift_z=0,
+                rot_y_rad=profile_position.rot_y_rad,
+                rot_x_rad=profile_position.rot_x_rad,
+                rot_z_rad=profile_position.rot_s_rad,
             )
+            return profile_in_axis @ poly_3d
+
+        def _profile_poly_in_floor(transform, pipe, profile_position):
+            h = pipe.curvature
+            poly_axis = _profile_poly_in_axis(profile_position, len_points)
+            profile_in_pipe = arc_matrix(
+                length=profile_position.shift_s,
+                angle=h * profile_position.shift_s,
+                tilt=0,
+            ) @ poly_axis
+            poly_world = transform @ profile_in_pipe
+            return poly_world[[2, 0]].T
+
+        def _segment_s_values(left_s, right_s):
+            if resolution is None:
+                return np.array([left_s, right_s], dtype=FloatType._dtype)
+
+            length = right_s - left_s
+            if abs(length) <= self.s_tol:
+                return np.array([left_s, right_s], dtype=FloatType._dtype)
+
+            step = np.copysign(resolution, length)
+            values = np.arange(left_s, right_s, step, dtype=FloatType._dtype)
+            if len(values) == 0 or abs(values[0] - left_s) > self.s_tol:
+                values = np.r_[left_s, values]
+            if abs(values[-1] - right_s) > self.s_tol:
+                values = np.r_[values, right_s]
+            return values
+
+        def _plot_segment_box(transform, pipe, left_profile_position, right_profile_position, line_colour, label):
+            h = pipe.curvature
+            left_poly_axis = _profile_poly_in_axis(left_profile_position, len_points)
+            right_poly_axis = _profile_poly_in_axis(right_profile_position, len_points)
+            left_s = left_profile_position.shift_s
+            right_s = right_profile_position.shift_s
+            s_values = _segment_s_values(left_s, right_s)
+
+            rings = []
+            for s_val in s_values:
+                weight = 0.0 if abs(right_s - left_s) <= self.s_tol else (s_val - left_s) / (right_s - left_s)
+                poly_axis = (1.0 - weight) * left_poly_axis + weight * right_poly_axis
+                poly_in_pipe = arc_matrix(length=s_val, angle=h * s_val, tilt=0) @ poly_axis
+                rings.append((transform @ poly_in_pipe)[[2, 0]].T)
+
+            polygons = []
+            for left_poly, right_poly in zip(rings[:-1], rings[1:]):
+                for ii in range(len(left_poly)):
+                    jj = (ii + 1) % len(left_poly)
+                    polygons.append([
+                        left_poly[ii],
+                        left_poly[jj],
+                        right_poly[jj],
+                        right_poly[ii],
+                    ])
+
+            collection = PolyCollection(
+                polygons,
+                closed=True,
+                facecolors=line_colour,
+                edgecolors=line_colour,
+                alpha=box_alpha,
+                linewidths=0.8,
+                label=label,
+            )
+            ax.add_collection(collection)
+            return collection
+
+        def _plot_profile_box(transform, pipe, profile_position, line_colour, label):
+            poly = _profile_poly_in_floor(transform, pipe, profile_position)
+            collection = PolyCollection(
+                [poly],
+                closed=True,
+                facecolors=line_colour,
+                edgecolors=line_colour,
+                alpha=box_alpha,
+                linewidths=0.8,
+                label=label,
+            )
+            ax.add_collection(collection)
+            return collection
+
+        palette = plt.rcParams['axes.prop_cycle'].by_key().get('color', ['C0'])
+
+        if boxes:
+            for row in pipe_table.rows:
+                if not _in_s_range(row.s_start, row.s_end):
+                    continue
+
+                pipe_position = self.pipe_positions[row.name]
+                pipe = pipe_position.pipe
+                sv_ref_transform = survey_relative_transform(self.survey, 0, pipe_position.survey_reference_name)
+                transform = plot_shift @ sv_ref_transform @ pipe_position.transformation
+
+                if len(pipe) == 1:
+                    profile_position = pipe[0]
+                    colour_name = profile_position.profile.name if colour == 'profile' else pipe.name
+                    line_colour = _hashed_color(colour_name, palette)
+                    artist = _plot_profile_box(
+                        transform=transform,
+                        pipe=pipe,
+                        profile_position=profile_position,
+                        line_colour=line_colour,
+                        label=colour_name,
+                    )
+                    _register_click_artist(artist, row.name)
+                    continue
+
+                for left_profile_position, right_profile_position in zip(pipe[:-1], pipe[1:]):
+                    if colour == 'profile':
+                        left_name = left_profile_position.profile.name
+                        right_name = right_profile_position.profile.name
+                        colour_name = left_name if left_name == right_name else f'{left_name}-{right_name}'
+                    else:
+                        colour_name = pipe.name
+                    line_colour = _hashed_color(colour_name, palette)
+                    artist = _plot_segment_box(
+                        transform=transform,
+                        pipe=pipe,
+                        left_profile_position=left_profile_position,
+                        right_profile_position=right_profile_position,
+                        line_colour=line_colour,
+                        label=colour_name,
+                    )
+                    _register_click_artist(artist, row.name)
+
+        if sections:
+            for row in pipe_table.rows:
+                if not _in_s_range(row.s_start, row.s_end):
+                    continue
+
+                pipe_position = self.pipe_positions[row.name]
+                pipe = pipe_position.pipe
+                sv_ref_transform = survey_relative_transform(self.survey, 0, pipe_position.survey_reference_name)
+                transform = plot_shift @ sv_ref_transform @ pipe_position.transformation
+                num_lines_before = len(ax.lines)
+                pipe.plot_projection(
+                    ax=ax,
+                    plane='zx',
+                    transform=transform,
+                    len_points=len_points,
+                    colour=colour,
+                    legend=False
+                )
+                for line in ax.lines[num_lines_before:]:
+                    _register_click_artist(line, row.name)
+
+        ax.set_xlabel('z [m]')
+        ax.set_ylabel('x [m]')
+        ax.autoscale_view()
+
+        if click and click_artists:
+            for cid in getattr(ax, '_xtrack_aperture_click_cids', []):
+                ax.figure.canvas.mpl_disconnect(cid)
+
+            def _on_button_press(event):
+                clicked_name = None
+                if event.inaxes is ax:
+                    for artist, name in reversed(click_artists):
+                        contains, _ = artist.contains(event)
+                        if contains:
+                            clicked_name = name
+                            break
+
+                if clicked_name is not None:
+                    print(clicked_name, flush=True)
+
+            cid = ax.figure.canvas.mpl_connect('button_press_event', _on_button_press)
+            ax._xtrack_aperture_click_cids = [cid]
 
         if legend:
             _deduplicate_legend(ax)
@@ -1235,6 +1546,288 @@ class Aperture:
 
         ax.set_aspect(aspect)
         return ax
+
+    def plot_3d(
+        self,
+        len_points=64,
+        longitudinal_points=8,
+        colors=None,
+        opacity=0.35,
+        show_edges=True,
+        origin: str | None = None,
+        s_range: tuple[float, float] | None = None,
+        resolution: float | None = None,
+        window_size: tuple[int, int] = (1200, 800),
+        background: tuple[float, float, float] = (1.0, 1.0, 1.0),
+        z_compression: float = 0.01,
+        start: bool = True,
+    ):
+        """Plot aperture pipes as interactive 3D VTK meshes.
+
+        Mouse interaction uses VTK's trackball camera controls. Clicking on a
+        pipe prints the installed pipe name to stdout.
+        """
+        try:
+            import vtk
+        except ImportError as exc:
+            raise ImportError(
+                "Aperture.plot_3d requires VTK. Install it with `pip install vtk`."
+            ) from exc
+
+        if len_points < 3:
+            raise ValueError('`len_points` must be at least 3.')
+        if longitudinal_points < 2:
+            raise ValueError('`longitudinal_points` must be at least 2.')
+        if resolution is not None and resolution <= 0:
+            raise ValueError('`resolution` must be positive.')
+        if z_compression <= 0:
+            raise ValueError('`z_compression` must be positive.')
+
+        pipe_table = self.get_pipe_table()
+        line_length = self.line.get_length()
+        origin_s = 0.0
+        plot_shift = np.identity(4)
+
+        if s_range and s_range[0] > s_range[1] and not self.is_ring:
+            raise ValueError('The `origin` pipe position is outside of the `s_range` specified.')
+
+        if origin is not None:
+            origin_pipe_position = self.pipe_positions[origin]
+            origin_survey_ref = origin_pipe_position.survey_reference_name
+            origin_row = pipe_table.rows[origin]
+            origin_s = float(np.asarray(origin_row.s_start).item())
+
+            origin_sv_ref_transform = survey_relative_transform(self.survey, 0, origin_survey_ref)
+            origin_transform = origin_sv_ref_transform @ origin_pipe_position.transformation
+            plot_shift = np.linalg.inv(origin_transform)
+
+        def _in_s_range(s_start, s_end) -> bool:
+            if s_range is None:
+                return True
+
+            window_start = origin_s + s_range[0]
+            window_end = origin_s + s_range[1]
+
+            if not self.is_ring:
+                return s_end >= window_start - self.s_tol and s_start <= window_end + self.s_tol
+
+            window_width = (window_end - window_start) % line_length
+            if window_width >= line_length - self.s_tol:
+                return True
+
+            row_segments = _split_wrapped_s_interval(
+                s_start, s_end, line_length=line_length, wrap=True, s_tol=self.s_tol,
+            )
+            window_segments = _split_wrapped_s_interval(
+                window_start, window_end, line_length=line_length, wrap=True, s_tol=self.s_tol,
+            )
+            return any(
+                row_start <= window_end_seg + self.s_tol and window_start_seg <= row_end + self.s_tol
+                for row_start, row_end in row_segments
+                for window_start_seg, window_end_seg in window_segments
+            )
+
+        def _profile_poly_in_axis(profile_position):
+            profile = profile_position.profile.raw
+            poly_2d = profile.build_polygon(len_points)
+            if np.allclose(poly_2d[0], poly_2d[-1], atol=1e-14, rtol=0):
+                poly_2d = poly_2d[:-1]
+            poly_3d = np.column_stack((
+                poly_2d,
+                np.zeros(len(poly_2d)),
+                np.ones(len(poly_2d)),
+            )).T
+            profile_in_axis = transform_matrix(
+                shift_x=profile_position.shift_x,
+                shift_y=profile_position.shift_y,
+                shift_z=0,
+                rot_y_rad=profile_position.rot_y_rad,
+                rot_x_rad=profile_position.rot_x_rad,
+                rot_z_rad=profile_position.rot_s_rad,
+            )
+            return profile_in_axis @ poly_3d
+
+        def _segment_s_values(left_s, right_s):
+            if resolution is None:
+                return np.linspace(left_s, right_s, longitudinal_points)
+
+            length = right_s - left_s
+            if abs(length) <= self.s_tol:
+                return np.array([left_s, right_s], dtype=FloatType._dtype)
+
+            step = np.copysign(resolution, length)
+            values = np.arange(left_s, right_s, step, dtype=FloatType._dtype)
+            if len(values) == 0 or abs(values[0] - left_s) > self.s_tol:
+                values = np.r_[left_s, values]
+            if abs(values[-1] - right_s) > self.s_tol:
+                values = np.r_[values, right_s]
+            return values
+
+        def _rings_for_pipe(transform, pipe):
+            h = pipe.curvature
+
+            if len(pipe) == 1:
+                profile_position = pipe[0]
+                profile_in_pipe = arc_matrix(
+                    length=profile_position.shift_s,
+                    angle=h * profile_position.shift_s,
+                    tilt=0,
+                ) @ _profile_poly_in_axis(profile_position)
+                ring = (transform @ profile_in_pipe)[:3].T
+                ring[:, 2] *= z_compression
+                return [ring]
+
+            rings = []
+            for i_seg, (left_profile_position, right_profile_position) in enumerate(zip(pipe[:-1], pipe[1:])):
+                left_axis = _profile_poly_in_axis(left_profile_position)
+                right_axis = _profile_poly_in_axis(right_profile_position)
+                left_s = left_profile_position.shift_s
+                right_s = right_profile_position.shift_s
+                s_values = _segment_s_values(left_s, right_s)
+
+                for i_s, s_val in enumerate(s_values):
+                    if i_seg > 0 and i_s == 0:
+                        continue
+                    weight = 0.0 if right_s == left_s else (s_val - left_s) / (right_s - left_s)
+                    poly_axis = (1.0 - weight) * left_axis + weight * right_axis
+                    poly_in_pipe = arc_matrix(length=s_val, angle=h * s_val, tilt=0) @ poly_axis
+                    ring = (transform @ poly_in_pipe)[:3].T
+                    ring[:, 2] *= z_compression
+                    rings.append(ring)
+
+            return rings
+
+        def _polydata_from_rings(rings):
+            points = vtk.vtkPoints()
+            polys = vtk.vtkCellArray()
+            n_rings = len(rings)
+            n_points = len(rings[0])
+
+            for ring in rings:
+                for x, y, z in ring:
+                    points.InsertNextPoint(float(x), float(y), float(z))
+
+            if n_rings == 1:
+                polys.InsertNextCell(n_points)
+                for i_point in range(n_points):
+                    polys.InsertCellPoint(i_point)
+            else:
+                for i_ring in range(n_rings - 1):
+                    base_left = i_ring * n_points
+                    base_right = (i_ring + 1) * n_points
+                    for i_point in range(n_points):
+                        j_point = (i_point + 1) % n_points
+                        polys.InsertNextCell(4)
+                        polys.InsertCellPoint(base_left + i_point)
+                        polys.InsertCellPoint(base_left + j_point)
+                        polys.InsertCellPoint(base_right + j_point)
+                        polys.InsertCellPoint(base_right + i_point)
+
+                polys.InsertNextCell(n_points)
+                for i_point in reversed(range(n_points)):
+                    polys.InsertCellPoint(i_point)
+
+                end_base = (n_rings - 1) * n_points
+                polys.InsertNextCell(n_points)
+                for i_point in range(n_points):
+                    polys.InsertCellPoint(end_base + i_point)
+
+            polydata = vtk.vtkPolyData()
+            polydata.SetPoints(points)
+            polydata.SetPolys(polys)
+
+            normals = vtk.vtkPolyDataNormals()
+            normals.SetInputData(polydata)
+            normals.ConsistencyOn()
+            normals.AutoOrientNormalsOn()
+            normals.SplittingOff()
+            normals.Update()
+            return normals.GetOutput()
+
+        if colors is None:
+            colors = [
+                (0.121, 0.466, 0.705),
+                (1.000, 0.498, 0.054),
+                (0.172, 0.627, 0.172),
+                (0.839, 0.153, 0.157),
+                (0.580, 0.404, 0.741),
+                (0.549, 0.337, 0.294),
+                (0.890, 0.467, 0.761),
+                (0.498, 0.498, 0.498),
+                (0.737, 0.741, 0.133),
+                (0.090, 0.745, 0.811),
+            ]
+
+        named_colors = vtk.vtkNamedColors()
+
+        def _as_rgb(color):
+            if isinstance(color, str):
+                return named_colors.GetColor3d(color)
+            return tuple(float(c) for c in color)
+
+        renderer = vtk.vtkRenderer()
+        renderer.SetBackground(*background)
+
+        render_window = vtk.vtkRenderWindow()
+        render_window.SetWindowName('Aperture 3D')
+        render_window.SetSize(*window_size)
+        render_window.AddRenderer(renderer)
+
+        interactor = vtk.vtkRenderWindowInteractor()
+        interactor.SetRenderWindow(render_window)
+        interactor.SetInteractorStyle(vtk.vtkInteractorStyleTrackballCamera())
+
+        actor_names = {}
+
+        def _vtk_key(obj):
+            if obj is None:
+                return None
+            return getattr(obj, '__this__', None) or obj.GetAddressAsString('')
+
+        rows_to_plot = [row for row in pipe_table.rows if _in_s_range(row.s_start, row.s_end)]
+        for i_row, row in enumerate(rows_to_plot):
+            pipe_position = self.pipe_positions[row.name]
+            pipe = pipe_position.pipe
+            sv_ref_transform = survey_relative_transform(self.survey, 0, pipe_position.survey_reference_name)
+            transform = plot_shift @ sv_ref_transform @ pipe_position.transformation
+            rings = _rings_for_pipe(transform, pipe)
+            if not rings:
+                continue
+
+            mapper = vtk.vtkPolyDataMapper()
+            mapper.SetInputData(_polydata_from_rings(rings))
+
+            actor = vtk.vtkActor()
+            actor.SetMapper(mapper)
+            actor.SetPickable(True)
+            actor.GetProperty().SetColor(*_as_rgb(colors[i_row % len(colors)]))
+            actor.GetProperty().SetOpacity(opacity)
+            actor.GetProperty().SetEdgeVisibility(bool(show_edges))
+            actor.GetProperty().SetLineWidth(0.5)
+
+            renderer.AddActor(actor)
+            actor_names[_vtk_key(actor)] = row.name
+
+        picker = vtk.vtkCellPicker()
+        picker.SetTolerance(0.0005)
+        def _on_left_button_press(obj, event):
+            x_pos, y_pos = interactor.GetEventPosition()
+            picker.Pick(x_pos, y_pos, 0, renderer)
+            clicked_name = actor_names.get(_vtk_key(picker.GetActor()))
+            if clicked_name is not None:
+                print(clicked_name, flush=True)
+            interactor.GetInteractorStyle().OnLeftButtonDown()
+
+        interactor.AddObserver('LeftButtonPressEvent', _on_left_button_press)
+
+        renderer.ResetCamera()
+
+        if start:
+            render_window.Render()
+            interactor.Initialize()
+            interactor.Start()
+
+        return renderer, render_window, interactor
 
     def _get_cuts_at_element(self, element_name: str, resolution: float | None) -> list[float]:
         """Get list of s positions so that the element ``element_name`` is cut with a ``resolution``."""
