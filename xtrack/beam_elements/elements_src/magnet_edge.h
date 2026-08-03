@@ -13,7 +13,7 @@ GPUFUN
 void MagnetEdge_track_local_particle(MagnetEdgeData el, LocalParticle* part0)
 {
     const int8_t model = MagnetEdgeData_get_model(el);
-    const uint8_t is_exit = MagnetEdgeData_get_is_exit(el);
+    const uint8_t physical_is_exit = MagnetEdgeData_get_is_exit(el);
     const double half_gap = MagnetEdgeData_get_half_gap(el);
     const double* knorm = MagnetEdgeData_getp1_kn(el, 0);
     const double* kskew = MagnetEdgeData_getp1_ks(el, 0);
@@ -28,10 +28,13 @@ void MagnetEdge_track_local_particle(MagnetEdgeData el, LocalParticle* part0)
     const double fringe_integral = MagnetEdgeData_get_fringe_integral(el);
 
     double factor_for_backtrack;
+    uint8_t is_exit;
     if (LocalParticle_check_track_flag(part0, XS_FLAG_BACKTRACK)) {
         factor_for_backtrack = -1;
+        is_exit = !physical_is_exit;
     } else {
         factor_for_backtrack = 1;
+        is_exit = physical_is_exit;
     }
 
     track_magnet_edge_particles(
